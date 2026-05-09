@@ -1,6 +1,8 @@
 """化学学习套件 — 应用入口"""
 
 import sys
+import threading
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -107,6 +109,8 @@ TOOL_TITLES = {
 }
 
 
+_http_server = None
+
 class ChemistrySuite(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -123,6 +127,7 @@ class ChemistrySuite(QMainWindow):
 
         self._build_menus()
         self._load_ui()
+        self._start_http_server()
         self._build_sidebar_and_content()
         self._setup_shortcuts()
         self._connect_pdf_signals()
@@ -207,6 +212,24 @@ class ChemistrySuite(QMainWindow):
         action.triggered.connect(handler)
         self._menu_action_texts[action] = text.split("\t")[0]
         return action
+
+    # ── HTTP 服务器 ────────────────────────────────────────────
+    def _start_http_server(self):
+        global _http_server
+        if _http_server is not None:
+            return
+        web_root = str(self.base_dir / "web")
+
+        class Handler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=web_root, **kwargs)
+
+            def log_message(self, format, *args):
+                pass
+
+        _http_server = HTTPServer(("127.0.0.1", 8766), Handler)
+        t = threading.Thread(target=_http_server.serve_forever, daemon=True)
+        t.start()
 
     # ── UI 加载 ────────────────────────────────────────────────
     def _load_ui(self):

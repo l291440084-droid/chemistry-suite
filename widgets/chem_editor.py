@@ -52,7 +52,12 @@ class ChemEditorWidget(QWidget):
         self._init_ui()
 
     def _init_http_server(self):
-        """启动后台 HTTP 服务器，提供 web/ 目录的文件"""
+        """HTTP 服务器由 main.py 统一启动，此处仅保留引用以避免重复绑定"""
+        import main
+        global_server = getattr(main, "_http_server", None)
+        if global_server is not None:
+            self._server = global_server
+            return
         web_root = self._web_dir
 
         class Handler(SimpleHTTPRequestHandler):
@@ -63,6 +68,7 @@ class ChemEditorWidget(QWidget):
                 pass
 
         self._server = HTTPServer(("127.0.0.1", self._port), Handler)
+        main._http_server = self._server
         thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         thread.start()
 
