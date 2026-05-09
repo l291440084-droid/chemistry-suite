@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=化学学习套件
+Name[en]=Chemistry Suite
+Comment=一站式化学学习工作台 — 结构编辑/3D分子/公式/教材/周期表/笔记
+Exec=bash -c 'cd "$(dirname "$0")" && ./run.sh'
+Icon=favicon-32x32.png
+Path=/home/one/chemistry-suite
+Terminal=false
+Categories=Education;Science;Chemistry;
+StartupNotify=true

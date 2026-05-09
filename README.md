@@ -36,13 +36,29 @@ setup_windows.bat
 ### Linux
 
 ```bash
-python3 -m venv ../chemistry-suite-venv
-source ../chemistry-suite-venv/bin/activate
-pip install -r requirements.txt
-npm install
+chmod +x setup_linux.sh run.sh
+./setup_linux.sh
+```
+
+安装桌面快捷方式（可选）：
+
+```bash
+cp chemistry-suite.desktop ~/.local/share/applications/
+```
+
+### Windows
+
+```bat
+setup_windows.bat
 ```
 
 ## 启动
+
+### Linux
+
+```bash
+./run.sh
+```
 
 ### Windows
 
@@ -50,12 +66,6 @@ npm install
 
 ```bat
 run.bat
-```
-
-### Linux
-
-```bash
-./run.sh
 ```
 
 首次启动会自动加载本地 HTTP 服务器 (端口 8766) 供 Web 组件使用。
