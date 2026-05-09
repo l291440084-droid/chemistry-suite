@@ -124,6 +124,7 @@ class ChemistrySuite(QMainWindow):
         self._detached_tools = {}   # key → DetachableToolWindow
         self._pdf_selected_text = ""
         self._tool_indices = {}
+        self.notes_manager = NotesManager()
 
         self._build_menus()
         self._load_ui()
@@ -316,7 +317,11 @@ class ChemistrySuite(QMainWindow):
         self._tool_container.hide()
 
         # PDF 阅读器 (常驻)
-        self.pdf_reader = PDFReaderWidget(http_port=8766)
+        self.pdf_reader = PDFReaderWidget(
+            books_dir=self.base_dir / "books",
+            http_port=8766,
+            notes_manager=self.notes_manager,
+        )
 
         self._content_splitter.addWidget(self._tool_container)
         self._content_splitter.addWidget(self.pdf_reader)
@@ -393,8 +398,6 @@ class ChemistrySuite(QMainWindow):
         elif key == "tl":
             return self._make_tools_panel()
         elif key == "nt":
-            if not hasattr(self, "notes_manager"):
-                self.notes_manager = NotesManager()
             self.note_editor = NoteEditorWidget(self.notes_manager)
             return self.note_editor
         return None
@@ -492,30 +495,67 @@ class ChemistrySuite(QMainWindow):
         if hasattr(self, "pdf_reader") and self.pdf_reader:
             self.pdf_reader.signal_context_menu.connect(self._on_pdf_context_menu)
             self.pdf_reader.signal_import_requested.connect(self._open_pdf)
+            self.pdf_reader.signal_file_opened.connect(self._on_pdf_file_opened)
+            self.pdf_reader.signal_page_changed.connect(self._on_pdf_page_changed)
 
     def _on_pdf_context_menu(self, text, x, y):
         self._pdf_selected_text = text.strip()
-        if not self._pdf_selected_text:
-            return
 
         menu = QMenu(self)
 
-        menu.addAction(i18n.tr("在结构编辑器中打开"), self._ctx_open_structure)
-        menu.addAction(i18n.tr("查看 3D 结构"), self._ctx_view_3d)
-        menu.addAction(i18n.tr("查询原子量/元素"), self._ctx_query_element)
+        has_text = bool(self._pdf_selected_text)
+
+        a_copy = menu.addAction(i18n.tr("复制\tCtrl+C"))
+        a_copy.setEnabled(has_text)
+        a_copy.triggered.connect(self._pdf_copy)
+
+        a_cut = menu.addAction(i18n.tr("剪切\tCtrl+X"))
+        a_cut.setEnabled(has_text)
+        a_cut.triggered.connect(self._pdf_cut)
+
+        a_paste = menu.addAction(i18n.tr("粘贴\tCtrl+V"))
+        a_paste.triggered.connect(self._pdf_paste)
+
         menu.addSeparator()
-        menu.addAction(i18n.tr("从 PubChem 搜索"), self._ctx_pubchem_search)
-        menu.addAction(i18n.tr("添加到笔记"), self._ctx_add_to_notes)
 
-        more = menu.addMenu(i18n.tr("更多"))
-        more.addAction(i18n.tr("波谱模拟"), self._ctx_spectroscopy)
-        more.addAction(i18n.tr("MO 能级图"), self._ctx_mo)
-        more.addAction(i18n.tr("IUPAC 命名"), self._ctx_naming)
-        more.addAction(i18n.tr("热力学数据"), self._ctx_thermo)
-        more.addAction(i18n.tr("晶体结构查询"), self._ctx_crystal)
+        a_select = menu.addAction(i18n.tr("全选\tCtrl+A"))
+        a_select.triggered.connect(self._pdf_select_all)
 
-        gpos = self.pdf_reader.webview.mapToGlobal(QPoint(x, y))
-        menu.exec(gpos)
+        if has_text:
+            menu.addSeparator()
+            menu.addAction(i18n.tr("在结构编辑器中打开"), self._ctx_open_structure)
+            menu.addAction(i18n.tr("查看 3D 结构"), self._ctx_view_3d)
+            menu.addAction(i18n.tr("查询原子量/元素"), self._ctx_query_element)
+            menu.addSeparator()
+            menu.addAction(i18n.tr("从 PubChem 搜索"), self._ctx_pubchem_search)
+            menu.addAction(i18n.tr("添加到笔记"), self._ctx_add_to_notes)
+
+            more = menu.addMenu(i18n.tr("更多"))
+            more.addAction(i18n.tr("波谱模拟"), self._ctx_spectroscopy)
+            more.addAction(i18n.tr("MO 能级图"), self._ctx_mo)
+            more.addAction(i18n.tr("IUPAC 命名"), self._ctx_naming)
+            more.addAction(i18n.tr("热力学数据"), self._ctx_thermo)
+            more.addAction(i18n.tr("晶体结构查询"), self._ctx_crystal)
+
+        menu.exec(QPoint(x, y))
+
+    def _pdf_copy(self):
+        self.pdf_reader._copy()
+
+    def _pdf_cut(self):
+        self.pdf_reader._cut()
+
+    def _pdf_paste(self):
+        self.pdf_reader._paste()
+
+    def _pdf_select_all(self):
+        self.pdf_reader._select_all()
+
+    def _on_pdf_file_opened(self, filename, total_pages):
+        self._init_status(f"{filename}  ({total_pages} {i18n.tr('页')})")
+
+    def _on_pdf_page_changed(self, page, total):
+        pass
 
     def _ctx_open_structure(self):
         self._sidebar.set_checked("mol", True)
@@ -537,8 +577,6 @@ class ChemistrySuite(QMainWindow):
 
     def _ctx_add_to_notes(self):
         text = self._pdf_selected_text
-        if not hasattr(self, "notes_manager"):
-            self.notes_manager = NotesManager()
         self.notes_manager.add_note(
             subject=i18n.tr("通用"),
             title=f"{i18n.tr('来自电子书: ')}{text[:30]}",
@@ -749,7 +787,7 @@ class ChemistrySuite(QMainWindow):
             self._init_status(str(count) + " " + i18n.tr("本教材已导入"))
         else:
             self._init_status(i18n.tr("教材已存在，无需重复导入"))
-        self.pdf_reader.webview.page().runJavaScript("listBooks();")
+        self.pdf_reader.refresh_book_list()
 
     def _import_pubchem(self):
         name, ok = QInputDialog.getText(
@@ -810,7 +848,7 @@ class ChemistrySuite(QMainWindow):
                 if not dest.exists():
                     shutil.copy2(path, dest)
                 self._init_status(i18n.tr("拖放添加教材: ") + Path(path).name)
-                self.pdf_reader.webview.page().runJavaScript("listBooks();")
+                self.pdf_reader.refresh_book_list()
 
     # ── 学科切换 ──────────────────────────────────────────────
     def _on_subject_changed(self, index: int):

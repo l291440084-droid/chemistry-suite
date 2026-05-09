@@ -12,3 +12,4 @@ notes/notes.db
 .DS_Store
 Thumbs.db
 *.spec
+books/*.pdf
