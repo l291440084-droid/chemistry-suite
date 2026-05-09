@@ -63,7 +63,7 @@ class DetachableToolWindow(QMainWindow):
 def _build_command_registry(window):
     return {
         "打开结构文件": (window._import_file, "Ctrl+O", "文件"),
-        "打开教材 PDF": (window._open_pdf, "Ctrl+P", "文件"),
+        "导入教材 PDF": (window._open_pdf, "Ctrl+P", "文件"),
         "从 PubChem 导入": (window._import_pubchem, "Ctrl+Shift+D", "文件"),
         "从 PDB 导入": (window._import_pdb, "Ctrl+Shift+P", "文件"),
         "退出应用": (window.close, "Ctrl+Q", "文件"),
@@ -125,7 +125,7 @@ class ChemistrySuite(QMainWindow):
         self._load_ui()
         self._build_sidebar_and_content()
         self._setup_shortcuts()
-        self._connect_pdf_context_menu()
+        self._connect_pdf_signals()
         self._init_status("就绪 — Ctrl+Shift+P 命令面板 | 左侧工具栏 | 面板可分离")
 
         i18n.languageChanged.connect(self._update_ui_texts)
@@ -139,7 +139,7 @@ class ChemistrySuite(QMainWindow):
         m = mb.addMenu("文件(&F)")
         self._file_menu = m
         self._add_menu_action(m, "打开结构文件...\tCtrl+O", self._import_file)
-        self._add_menu_action(m, "打开教材 PDF...\tCtrl+P", self._open_pdf)
+        self._add_menu_action(m, "导入教材 PDF...\tCtrl+P", self._open_pdf)
         m.addSeparator()
         self._add_menu_action(m, "从 PubChem 导入...\tCtrl+Shift+D", self._import_pubchem)
         self._add_menu_action(m, "从 PDB 导入...\tCtrl+Shift+P", self._import_pdb)
@@ -461,10 +461,11 @@ class ChemistrySuite(QMainWindow):
         else:
             self._init_status(i18n.tr("没有已分离的面板"))
 
-    # ── PDF 右键菜单 ─────────────────────────────────────────
-    def _connect_pdf_context_menu(self):
+    # ── PDF 信号连接 ─────────────────────────────────────────
+    def _connect_pdf_signals(self):
         if hasattr(self, "pdf_reader") and self.pdf_reader:
             self.pdf_reader.signal_context_menu.connect(self._on_pdf_context_menu)
+            self.pdf_reader.signal_import_requested.connect(self._open_pdf)
 
     def _on_pdf_context_menu(self, text, x, y):
         self._pdf_selected_text = text.strip()
@@ -705,17 +706,23 @@ class ChemistrySuite(QMainWindow):
             self._init_status(i18n.tr("已加载: ") + fmt.upper())
 
     def _open_pdf(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, i18n.tr("打开教材 PDF"), str(self.base_dir / "books"),
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, i18n.tr("导入书籍 — 可多选 PDF"), str(self.base_dir / "books"),
             i18n.tr("PDF 文件 (*.pdf);;所有文件 (*)")
         )
-        if not path:
+        if not paths:
             return
         import shutil
-        dest = self.base_dir / "books" / Path(path).name
-        if not dest.exists():
-            shutil.copy2(path, dest)
-        self._init_status(i18n.tr("已添加教材: ") + Path(path).name)
+        count = 0
+        for p in paths:
+            dest = self.base_dir / "books" / Path(p).name
+            if not dest.exists():
+                shutil.copy2(p, dest)
+                count += 1
+        if count:
+            self._init_status(str(count) + " " + i18n.tr("本教材已导入"))
+        else:
+            self._init_status(i18n.tr("教材已存在，无需重复导入"))
         self.pdf_reader.webview.page().runJavaScript("listBooks();")
 
     def _import_pubchem(self):
@@ -1021,7 +1028,7 @@ USAGE_GUIDE_HTML = """
   <tr><td><b>Ctrl+Shift+P</b></td><td>命令面板</td></tr>
   <tr><td><b>Ctrl+1~6</b></td><td>切换学科标签</td></tr>
   <tr><td><b>Ctrl+O</b></td><td>打开结构文件</td></tr>
-  <tr><td><b>Ctrl+P</b></td><td>打开教材 PDF</td></tr>
+  <tr><td><b>Ctrl+P</b></td><td>导入教材 PDF</td></tr>
   <tr><td><b>Ctrl+D</b></td><td>2D → 3D</td></tr>
   <tr><td><b>Ctrl+G</b></td><td>获取 SMILES</td></tr>
   <tr><td><b>Ctrl+B</b></td><td>切换笔记面板</td></tr>

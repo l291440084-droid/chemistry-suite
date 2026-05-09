@@ -30,7 +30,7 @@ TRANSLATIONS = {
 
     # ── 文件菜单 ──
     "打开结构文件...": {"en": "Open Structure File...", "de": "Strukturdatei öffnen...", "fr": "Ouvrir un fichier de structure..."},
-    "打开教材 PDF...": {"en": "Open Textbook PDF...", "de": "Lehrbuch-PDF öffnen...", "fr": "Ouvrir un PDF..."},
+    "导入教材 PDF...": {"en": "Import Textbook PDF...", "de": "Lehrbuch-PDF importieren...", "fr": "Importer un PDF..."},
     "从 PubChem 导入...": {"en": "Import from PubChem...", "de": "Von PubChem importieren...", "fr": "Importer depuis PubChem..."},
     "从 PDB 导入...": {"en": "Import from PDB...", "de": "Von PDB importieren...", "fr": "Importer depuis PDB..."},
     "退出": {"en": "Exit", "de": "Beenden", "fr": "Quitter"},
@@ -153,7 +153,7 @@ TRANSLATIONS = {
 
     # ── 导入对话框 ──
     "打开结构文件": {"en": "Open Structure File", "de": "Strukturdatei öffnen", "fr": "Ouvrir un Fichier"},
-    "打开教材 PDF": {"en": "Open Textbook PDF", "de": "Lehrbuch-PDF öffnen", "fr": "Ouvrir un PDF"},
+    "导入教材 PDF": {"en": "Import Textbook PDF", "de": "Lehrbuch-PDF importieren", "fr": "Importer un PDF"},
     "输入化合物名称(中/英文)、SMILES、InChI 或 PubChem CID:": {
         "en": "Enter compound name, SMILES, InChI, or PubChem CID:",
         "de": "Name, SMILES, InChI oder PubChem CID eingeben:",
@@ -185,6 +185,10 @@ TRANSLATIONS = {
     "已加载 Molfile": {"en": "Molfile loaded", "de": "Molfile geladen", "fr": "Molfile chargé"},
     "已加载 PDB": {"en": "PDB loaded", "de": "PDB geladen", "fr": "PDB chargé"},
     "已添加教材: ": {"en": "Added textbook: ", "de": "Lehrbuch hinzugefügt: ", "fr": "Manuel ajouté: "},
+    "导入书籍": {"en": "Import Books", "de": "Bücher importieren", "fr": "Importer des livres"},
+    "导入书籍 — 可多选 PDF": {"en": "Import Books - multi-select", "de": "Bücher importieren - Mehrfachauswahl", "fr": "Importer des livres - sélection multiple"},
+    "本教材已导入": {"en": " textbook(s) imported", "de": " Lehrbücher importiert", "fr": " manuels importés"},
+    "教材已存在，无需重复导入": {"en": "Textbooks already exist", "de": "Lehrbücher bereits vorhanden", "fr": "Manuels déjà existants"},
     "PubChem: ": {"en": "PubChem: ", "de": "PubChem: ", "fr": "PubChem: "},
     "PDB: ": {"en": "PDB: ", "de": "PDB: ", "fr": "PDB: "},
     " 已加载": {"en": " loaded", "de": " geladen", "fr": " chargé"},
@@ -405,15 +409,17 @@ class I18nManager(QObject):
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._instance._init()
         return cls._instance
 
-    def _init(self):
+    def __init__(self):
+        if hasattr(self, "_initialized"):
+            return
         super().__init__()
         self._settings = QSettings("ChemistrySuite", "ChemistrySuite")
         self._lang = self._settings.value("language", "zh")
         if self._lang not in LANGUAGES:
             self._lang = "zh"
+        self._initialized = True
 
     @property
     def current_language(self):

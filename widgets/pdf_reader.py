@@ -17,6 +17,7 @@ class PDFReaderBridge(QObject):
     pageChanged = Signal(int, int)
     bookmarksChanged = Signal(str)
     contextMenu = Signal(str, int, int)  # selected_text, x, y
+    importRequested = Signal()
 
     @Slot(str)
     def onFileOpened(self, filename: str):
@@ -55,6 +56,9 @@ class PDFReaderWidget(QWidget):
         self.label_status = QLabel(i18n.tr("PDF 阅读器"))
         toolbar.addWidget(self.label_status)
         toolbar.addStretch()
+        self.btn_import = QPushButton(i18n.tr("导入书籍"))
+        self.btn_import.clicked.connect(self._on_import_clicked)
+        toolbar.addWidget(self.btn_import)
         layout.addLayout(toolbar)
 
         # WebEngine
@@ -81,6 +85,11 @@ class PDFReaderWidget(QWidget):
             self.label_status.setText(i18n.tr("加载失败"))
         else:
             self.label_status.setText(i18n.tr("PDF 阅读器"))
+        self.btn_import.setText(i18n.tr("导入书籍"))
+
+    def _on_import_clicked(self):
+        if self._bridge:
+            self._bridge.importRequested.emit()
 
     def _on_load_finished(self, ok: bool):
         self.label_status.setText(i18n.tr("PDF 阅读器就绪") if ok else i18n.tr("加载失败"))
@@ -110,3 +119,7 @@ class PDFReaderWidget(QWidget):
     @property
     def signal_context_menu(self):
         return self._bridge.contextMenu
+
+    @property
+    def signal_import_requested(self):
+        return self._bridge.importRequested
