@@ -92,7 +92,20 @@ class PDFReaderWidget(QWidget):
             self._bridge.importRequested.emit()
 
     def _on_load_finished(self, ok: bool):
-        self.label_status.setText(i18n.tr("PDF 阅读器就绪") if ok else i18n.tr("加载失败"))
+        if ok:
+            self.label_status.setText(i18n.tr("PDF 阅读器就绪"))
+            self._retry_count = 0
+        else:
+            self._retry_count = getattr(self, "_retry_count", 0) + 1
+            if self._retry_count <= 5:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(500, self._reload_page)
+            else:
+                self.label_status.setText(i18n.tr("加载失败"))
+
+    def _reload_page(self):
+        url = f"http://127.0.0.1:{self._port}/pdfjs/reader.html"
+        self._webview.setUrl(QUrl(url))
 
     def _call_js(self, func: str, *args):
         js_args = ", ".join(json.dumps(a) for a in args)

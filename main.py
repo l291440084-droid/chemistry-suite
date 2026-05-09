@@ -227,7 +227,10 @@ class ChemistrySuite(QMainWindow):
             def log_message(self, format, *args):
                 pass
 
-        _http_server = HTTPServer(("127.0.0.1", 8766), Handler)
+        class ReusableHTTPServer(HTTPServer):
+            allow_reuse_address = True
+
+        _http_server = ReusableHTTPServer(("127.0.0.1", 8766), Handler)
         t = threading.Thread(target=_http_server.serve_forever, daemon=True)
         t.start()
 

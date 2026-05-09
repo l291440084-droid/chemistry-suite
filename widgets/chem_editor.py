@@ -52,9 +52,9 @@ class ChemEditorWidget(QWidget):
         self._init_ui()
 
     def _init_http_server(self):
-        """HTTP 服务器由 main.py 统一启动，此处仅保留引用以避免重复绑定"""
-        import main
-        global_server = getattr(main, "_http_server", None)
+        """尝试启动 HTTP 服务器（如 main.py 已启动则复用）"""
+        import main as _main
+        global_server = getattr(_main, "_http_server", None)
         if global_server is not None:
             self._server = global_server
             return
@@ -67,10 +67,16 @@ class ChemEditorWidget(QWidget):
             def log_message(self, format, *args):
                 pass
 
-        self._server = HTTPServer(("127.0.0.1", self._port), Handler)
-        main._http_server = self._server
-        thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        thread.start()
+        class ReusableHTTPServer(HTTPServer):
+            allow_reuse_address = True
+
+        try:
+            self._server = ReusableHTTPServer(("127.0.0.1", self._port), Handler)
+            _main._http_server = self._server
+            t = threading.Thread(target=self._server.serve_forever, daemon=True)
+            t.start()
+        except OSError:
+            pass
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
