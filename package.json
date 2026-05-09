@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "3dmol": "^2.5.4",
+    "katex": "^0.16.45",
+    "pdfjs-dist": "^5.7.284"
+  }
+}

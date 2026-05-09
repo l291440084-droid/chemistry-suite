@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="/katex/katex.min.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; font-family: sans-serif; }
+  .container { display: flex; flex-direction: column; height: 100%; }
+  .toolbar {
+    display: flex; gap: 4px; padding: 4px 6px;
+    background: #f0f0f0; border-bottom: 1px solid #ccc;
+    flex-wrap: wrap;
+  }
+  .toolbar button {
+    padding: 3px 8px; font-size: 12px; cursor: pointer;
+    border: 1px solid #bbb; border-radius: 3px; background: #fff;
+  }
+  .toolbar button:hover { background: #e0e0ff; }
+  .toolbar select { padding: 2px 4px; font-size: 12px; }
+  .editor-area { display: flex; flex: 1; overflow: hidden; }
+  .input-panel {
+    flex: 1; display: flex; flex-direction: column;
+    border-right: 1px solid #ddd;
+  }
+  .input-panel textarea {
+    flex: 1; padding: 8px; font-family: 'Courier New', monospace;
+    font-size: 14px; border: none; resize: none; outline: none;
+  }
+  .preview-panel {
+    flex: 1; padding: 12px; overflow-y: auto;
+    display: flex; align-items: center; justify-content: center;
+    background: #fafafa;
+  }
+  .preview-panel .rendered { font-size: 1.4em; }
+  .katex-display { margin: 0.5em 0 !important; }
+  .error { color: #c00; font-size: 13px; padding: 4px 8px; background: #fff0f0; }
+  .templates-sidebar {
+    width: 220px; border-left: 1px solid #ddd; overflow-y: auto;
+    padding: 6px; background: #fafafa;
+  }
+  .templates-sidebar h4 { margin: 6px 0 4px; font-size: 12px; color: #555; }
+  .templates-sidebar .tpl-btn {
+    display: block; width: 100%; text-align: left;
+    padding: 3px 6px; margin: 1px 0; font-size: 11px;
+    cursor: pointer; border: 1px solid #e0e0e0;
+    border-radius: 2px; background: #fff;
+  }
+  .templates-sidebar .tpl-btn:hover { background: #e8e8ff; }
+  .status-bar {
+    padding: 2px 8px; background: #f5f5f5; border-top: 1px solid #ddd;
+    font-size: 11px; color: #777; display: flex; justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="toolbar">
+    <button onclick="insertTemplate('favorites')">收藏夹</button>
+    <select id="template-category" onchange="loadTemplateCategory()">
+      <option value="">选择模板分类...</option>
+      <option value="thermo">热力学</option>
+      <option value="kinetics">动力学</option>
+      <option value="quantum">量子化学</option>
+      <option value="electrochem">电化学</option>
+      <option value="statmech">统计力学</option>
+      <option value="structure">结构化学</option>
+      <option value="surface">表面化学</option>
+      <option value="general">常用数学</option>
+    </select>
+    <button onclick="addFavorite()">★ 收藏当前</button>
+    <button onclick="copyLaTeX()">复制 LaTeX</button>
+    <button onclick="clearAll()">清除</button>
+  </div>
+  <div class="editor-area">
+    <div class="input-panel">
+      <textarea id="latex-input" placeholder="在此输入 LaTeX 公式...
+例如: \Delta G^\circ = -RT \ln K
+多行用 \\\\ 分隔
+显示模式用 $$...$$ 包裹"></textarea>
+      <div id="error-msg" class="error" style="display:none;"></div>
+    </div>
+    <div class="preview-panel" id="preview">
+      <div class="rendered" id="output"></div>
+    </div>
+    <div class="templates-sidebar" id="templates-sidebar">
+      <h4>模板库</h4>
+      <div id="template-list">
+        <span style="font-size:11px;color:#888;">选择分类加载模板</span>
+      </div>
+    </div>
+  </div>
+  <div class="status-bar">
+    <span id="status-text">就绪</span>
+    <span id="char-count">0 字符</span>
+  </div>
+</div>
+
+<script src="/katex/katex.min.js"></script>
+<script src="/qwebchannel.js"></script>
+<script>
+var bridge = null;
+var favorites = [];
+
+// Template database
+var templates = {
+  thermo: [
+    {name: "Gibbs-Helmholtz", latex: "\\Delta G = \\Delta H - T\\Delta S"},
+    {name: "平衡常数与ΔG", latex: "\\Delta G^\\circ = -RT \\ln K"},
+    {name: "van't Hoff", latex: "\\frac{d\\ln K}{dT} = \\frac{\\Delta H^\\circ}{RT^2}"},
+    {name: "Clausius-Clapeyron", latex: "\\ln\\frac{P_2}{P_1} = -\\frac{\\Delta H_{vap}}{R}(\\frac{1}{T_2}-\\frac{1}{T_1})"},
+    {name: "化学势", latex: "\\mu_i = \\mu_i^\\circ + RT \\ln a_i"},
+    {name: "Gibbs相律", latex: "F = C - P + 2"},
+    {name: "Maxwell关系1", latex: "(\\frac{\\partial T}{\\partial V})_S = -(\\frac{\\partial P}{\\partial S})_V"},
+    {name: "Maxwell关系2", latex: "(\\frac{\\partial S}{\\partial V})_T = (\\frac{\\partial P}{\\partial T})_V"},
+  ],
+  kinetics: [
+    {name: "Arrhenius", latex: "k = A e^{-E_a/RT}"},
+    {name: "一级反应 t½", latex: "t_{1/2} = \\frac{\\ln 2}{k}"},
+    {name: "零级反应", latex: "[A] = [A]_0 - kt"},
+    {name: "一级反应", latex: "\\ln[A] = \\ln[A]_0 - kt"},
+    {name: "二级反应 (等浓度)", latex: "\\frac{1}{[A]} = \\frac{1}{[A]_0} + kt"},
+    {name: "Eyring方程", latex: "k = \\frac{k_BT}{h}e^{-\\Delta G^\\ddagger/RT}"},
+    {name: "Lindemann机理", latex: "A + M \\rightleftharpoons A^* + M"},
+  ],
+  quantum: [
+    {name: "Schrödinger方程", latex: "\\hat{H}\\psi = E\\psi"},
+    {name: "光子能量", latex: "E = h\\nu = \\frac{hc}{\\lambda}"},
+    {name: "de Broglie", latex: "\\lambda = \\frac{h}{p} = \\frac{h}{mv}"},
+    {name: "不确定原理", latex: "\\Delta x \\cdot \\Delta p \\geq \\frac{\\hbar}{2}"},
+    {name: "势箱能级", latex: "E_n = \\frac{n^2h^2}{8mL^2}"},
+    {name: "零点能", latex: "E_0 = \\frac{1}{2}h\\nu"},
+    {name: "Boltzmann分布", latex: "\\frac{N_i}{N_j} = \\frac{g_i}{g_j}e^{-(E_i-E_j)/k_BT}"},
+  ],
+  electrochem: [
+    {name: "Nernst方程", latex: "E = E^\\circ - \\frac{RT}{nF}\\ln Q"},
+    {name: "能斯特 (298K)", latex: "E = E^\\circ - \\frac{0.0592}{n}\\lg Q"},
+    {name: "ΔG与电动势", latex: "\\Delta G = -nFE"},
+    {name: "Butler-Volmer", latex: "j = j_0(e^{\\alpha_a F\\eta/RT} - e^{-\\alpha_c F\\eta/RT})"},
+    {name: "电导率", latex: "\\kappa = \\frac{1}{\\rho} = \\frac{l}{RA}"},
+    {name: "摩尔电导率", latex: "\\Lambda_m = \\frac{\\kappa}{c}"},
+  ],
+  statmech: [
+    {name: "Boltzmann熵", latex: "S = k_B \\ln \\Omega"},
+    {name: "配分函数Z", latex: "Z = \\sum_i g_i e^{-E_i/k_BT}"},
+    {name: "内能从Z", latex: "U = k_BT^2(\\frac{\\partial \\ln Z}{\\partial T})_V"},
+    {name: "Helmholtz从Z", latex: "A = -k_BT \\ln Z"},
+  ],
+  structure: [
+    {name: "Bragg方程", latex: "2d\\sin\\theta = n\\lambda"},
+    {name: "晶面间距 (立方)", latex: "\\frac{1}{d_{hkl}^2} = \\frac{h^2+k^2+l^2}{a^2}"},
+    {name: "结构因子", latex: "F_{hkl} = \\sum_j f_j e^{2\\pi i(hx_j+ky_j+lz_j)}"},
+    {name: "电子密度", latex: "\\rho(xyz) = \\frac{1}{V}\\sum_{hkl}F_{hkl}e^{-2\\pi i(hx+ky+lz)}"},
+  ],
+  surface: [
+    {name: "Langmuir等温式", latex: "\\theta = \\frac{KP}{1+KP}"},
+    {name: "BET等温式", latex: "\\frac{P}{V(P_0-P)} = \\frac{1}{V_mC} + \\frac{C-1}{V_mC}\\cdot\\frac{P}{P_0}"},
+    {name: "Gibbs吸附", latex: "\\Gamma = -\\frac{1}{RT}\\frac{d\\gamma}{d\\ln c}"},
+  ],
+  general: [
+    {name: "二次方程", latex: "x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}"},
+    {name: "积分公式", latex: "\\int x^n dx = \\frac{x^{n+1}}{n+1} + C"},
+    {name: "自然对数积分", latex: "\\int \\frac{dx}{x} = \\ln|x| + C"},
+    {name: "微分链式法则", latex: "\\frac{dy}{dx} = \\frac{dy}{du}\\cdot\\frac{du}{dx}"},
+    {name: "Taylor展开", latex: "f(x) = \\sum_{n=0}^{\\infty}\\frac{f^{(n)}(a)}{n!}(x-a)^n"},
+  ]
+};
+
+// Real-time render
+var input = document.getElementById('latex-input');
+var output = document.getElementById('output');
+var errorDiv = document.getElementById('error-msg');
+var charCount = document.getElementById('char-count');
+
+input.addEventListener('input', function() {
+  renderLatex(this.value);
+  charCount.textContent = this.value.length + ' 字符';
+});
+
+function renderLatex(text) {
+  if (!text.trim()) {
+    output.innerHTML = '<span style="color:#aaa;">公式预览</span>';
+    errorDiv.style.display = 'none';
+    return;
+  }
+  // Split by double dollar for display mode, or render line by line
+  var lines = text.split('\n');
+  var html = '';
+  var errors = [];
+  lines.forEach(function(line, i) {
+    line = line.trim();
+    if (!line) { html += '<br>'; return; }
+    // Check for display mode $$...$$
+    var displayMatch = line.match(/^\$\$(.+)\$\$$/);
+    if (displayMatch) {
+      try {
+        html += katex.renderToString(displayMatch[1], {displayMode: true, throwOnError: true});
+      } catch(e) {
+        errors.push('行' + (i+1) + ': ' + e.message);
+        html += '<span style="color:#c00;">' + escapeHtml(line) + '</span>';
+      }
+    } else {
+      // Render as inline first, fallback to display if it has \displaystyle-like commands
+      try {
+        html += katex.renderToString(line, {displayMode: false, throwOnError: true});
+      } catch(e) {
+        try {
+          html += katex.renderToString(line, {displayMode: true, throwOnError: true});
+        } catch(e2) {
+          errors.push('行' + (i+1) + ': ' + e2.message);
+          html += '<span style="color:#c00;">' + escapeHtml(line) + '</span>';
+        }
+      }
+    }
+    html += '<br>';
+  });
+
+  output.innerHTML = html;
+  if (errors.length) {
+    errorDiv.textContent = errors.join(' | ');
+    errorDiv.style.display = 'block';
+    document.getElementById('status-text').textContent = '错误: ' + errors[0];
+  } else {
+    errorDiv.style.display = 'none';
+    document.getElementById('status-text').textContent = '渲染完成';
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function insertTemplate(category) {
+  if (templates[category]) {
+    var tpl = templates[category][0];
+    input.value += (input.value ? '\n' : '') + tpl.latex;
+    renderLatex(input.value);
+    charCount.textContent = input.value.length + ' 字符';
+  }
+}
+
+function loadTemplateCategory() {
+  var sel = document.getElementById('template-category');
+  var cat = sel.value;
+  if (!cat) return;
+  var list = templates[cat] || [];
+  var html = '<h4>' + sel.options[sel.selectedIndex].text + '</h4>';
+  list.forEach(function(t) {
+    html += '<button class="tpl-btn" title="' + escapeHtml(t.latex) + '" onclick="insertOne(\'' +
+      escapeHtml(t.latex.replace(/'/g, "\\'").replace(/\\/g, '\\\\')) + '\')">' +
+      t.name + '</button>';
+  });
+  document.getElementById('template-list').innerHTML = html;
+}
+
+function insertOne(latex) {
+  input.value += (input.value ? '\n' : '') + latex;
+  renderLatex(input.value);
+  charCount.textContent = input.value.length + ' 字符';
+}
+
+function addFavorite() {
+  var text = input.value.trim();
+  if (text && favorites.indexOf(text) < 0) {
+    favorites.push(text);
+    document.getElementById('status-text').textContent = '已收藏 (' + favorites.length + ' 条)';
+    if (bridge) bridge.onFavoritesChanged(JSON.stringify(favorites));
+  }
+}
+
+function copyLaTeX() {
+  input.select();
+  document.execCommand('copy');
+  document.getElementById('status-text').textContent = '已复制到剪贴板';
+}
+
+function clearAll() {
+  input.value = '';
+  output.innerHTML = '<span style="color:#aaa;">公式预览</span>';
+  errorDiv.style.display = 'none';
+  charCount.textContent = '0 字符';
+  document.getElementById('status-text').textContent = '已清除';
+}
+
+// Public API for Python
+function getContent() { return input.value; }
+function setContent(text) { input.value = text; renderLatex(text); charCount.textContent = text.length + ' 字符'; }
+function getFavorites() { return JSON.stringify(favorites); }
+function setFavorites(json) { try { favorites = JSON.parse(json); } catch(e) {} }
+
+// QWebChannel
+new QWebChannel(qt.webChannelTransport, function(channel) {
+  bridge = channel.objects.bridge;
+  bridge.getContent = getContent;
+  bridge.setContent = setContent;
+  bridge.getFavorites = getFavorites;
+  bridge.setFavorites = setFavorites;
+});
+</script>
+</body>
+</html>

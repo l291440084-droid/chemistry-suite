@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  #ketcher-frame { width: 100%; height: 100%; border: none; }
+</style>
+</head>
+<body>
+<iframe id="ketcher-frame" src="standalone/index.html"></iframe>
+
+<script src="/qwebchannel.js"></script>
+<script>
+// Ketcher bridge — communicates with Python via QWebChannel
+var ketcherReady = false;
+var bridge = null;
+var pendingSmiles = null;
+
+// Wait for Ketcher iframe to signal readiness
+window.addEventListener('message', function(event) {
+  if (event.data && event.data.eventType === 'init') {
+    ketcherReady = true;
+    if (pendingSmiles) {
+      setMolecule(pendingSmiles);
+      pendingSmiles = null;
+    }
+  }
+});
+
+function getKetcher() {
+  var iframe = document.getElementById('ketcher-frame');
+  return iframe && iframe.contentWindow && iframe.contentWindow.ketcher;
+}
+
+function setMolecule(smiles) {
+  var k = getKetcher();
+  if (k && ketcherReady) {
+    try { k.setMolecule(smiles); } catch(e) { console.error(e); }
+  } else {
+    pendingSmiles = smiles;
+  }
+}
+
+function getSmiles() {
+  var k = getKetcher();
+  if (!k || !ketcherReady) return '';
+  try {
+    return k.getSmiles().then(function(s) {
+      if (bridge) bridge.onSmiles(s);
+      return s;
+    }).catch(function(e) { console.error(e); return ''; });
+  } catch(e) { console.error(e); return ''; }
+}
+
+function getMolfile() {
+  var k = getKetcher();
+  if (!k || !ketcherReady) return '';
+  try {
+    return k.getMolfile().then(function(m) {
+      if (bridge) bridge.onMolfile(m);
+      return m;
+    }).catch(function(e) { console.error(e); return ''; });
+  } catch(e) { console.error(e); return ''; }
+}
+
+function getSmilesAsync() {
+  var k = getKetcher();
+  if (!k || !ketcherReady) return;
+  k.getSmiles().then(function(s) {
+    if (bridge) bridge.onSmiles(s);
+  }).catch(function(e) { console.error(e); });
+}
+
+function getMolfileAsync() {
+  var k = getKetcher();
+  if (!k || !ketcherReady) return;
+  k.getMolfile().then(function(m) {
+    if (bridge) bridge.onMolfile(m);
+  }).catch(function(e) { console.error(e); });
+}
+
+function clearCanvas() {
+  var k = getKetcher();
+  if (k && ketcherReady) {
+    try { k.setMolecule(''); } catch(e) {}
+  }
+}
+
+function addFragment(template) {
+  var k = getKetcher();
+  if (k && ketcherReady) {
+    try { k.addFragment(template); } catch(e) {}
+  }
+}
+
+function layout() {
+  var k = getKetcher();
+  if (k && ketcherReady) {
+    try { k.layout(); } catch(e) {}
+  }
+}
+
+// Auto-fetch SMILES when structure changes
+var lastSmiles = '';
+setInterval(function() {
+  if (!ketcherReady) return;
+  var k = getKetcher();
+  if (!k) return;
+  k.getSmiles().then(function(s) {
+    if (s !== lastSmiles && bridge) {
+      lastSmiles = s;
+      bridge.onSmilesChanged(s);
+    }
+  }).catch(function(){});
+}, 800);
+
+// QWebChannel setup
+new QWebChannel(qt.webChannelTransport, function(channel) {
+  bridge = channel.objects.bridge;
+  // Expose functions to Python side
+  bridge.setMolecule = setMolecule;
+  bridge.getSmiles = getSmiles;
+  bridge.getMolfile = getMolfile;
+  bridge.getSmilesAsync = getSmilesAsync;
+  bridge.getMolfileAsync = getMolfileAsync;
+  bridge.clearCanvas = clearCanvas;
+  bridge.addFragment = addFragment;
+  bridge.layout = layout;
+  bridge.isReady = function() { return ketcherReady; };
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QWidget" name="centralContainer">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>1400</width><height>950</height></rect>
+  </property>
+  <layout class="QVBoxLayout" name="rootLayout">
+   <property name="spacing"><number>0</number></property>
+   <property name="leftMargin"><number>0</number></property>
+   <property name="topMargin"><number>0</number></property>
+   <property name="rightMargin"><number>0</number></property>
+   <property name="bottomMargin"><number>0</number></property>
+   <item>
+    <widget class="QTabWidget" name="subjectTabWidget">
+     <property name="currentIndex"><number>0</number></property>
+     <widget class="QWidget" name="tabOrganic">
+      <attribute name="title"><string>有机化学</string></attribute>
+     </widget>
+     <widget class="QWidget" name="tabInorganic">
+      <attribute name="title"><string>无机化学</string></attribute>
+     </widget>
+     <widget class="QWidget" name="tabPhysical">
+      <attribute name="title"><string>物理化学</string></attribute>
+     </widget>
+     <widget class="QWidget" name="tabStructural">
+      <attribute name="title"><string>结构化学</string></attribute>
+     </widget>
+     <widget class="QWidget" name="tabPrinciples">
+      <attribute name="title"><string>原理</string></attribute>
+     </widget>
+     <widget class="QWidget" name="tabAllTools">
+      <attribute name="title"><string>全部工具</string></attribute>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="mainArea">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Expanding" vsizetype="Expanding"/>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <layoutdefault spacing="4" margin="4"/>
+</ui>

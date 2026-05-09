@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+  #viewer-wrap { width: 100%; height: 100%; position: relative; }
+  #mol-viewer { width: 100%; height: 100%; cursor: crosshair; }
+  #info-overlay {
+    position: absolute; bottom: 6px; left: 6px;
+    padding: 3px 10px; background: rgba(0,0,0,0.7);
+    color: #ccc; font-size: 11px; font-family: monospace;
+    border-radius: 3px; pointer-events: none;
+    max-width: 95%;
+  }
+  #mode-indicator {
+    position: absolute; top: 8px; right: 8px;
+    padding: 4px 10px; background: rgba(0,0,0,0.7);
+    color: #4fc3f7; font-size: 11px; font-weight: bold;
+    border-radius: 3px; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<div id="viewer-wrap">
+  <div id="mol-viewer"></div>
+  <div id="info-overlay">3D 建模器就绪</div>
+  <div id="mode-indicator">模式: 选择</div>
+</div>
+
+<script src="/3dmol/3Dmol-min.js"></script>
+<script src="/qwebchannel.js"></script>
+<script>
+var viewer = null;
+var bridge = null;
+var mode = "select";       // build | select | delete | measure
+var activeElement = "C";
+var displayMode = "ballstick";
+var measureAtoms = [];     // 测量模式: 储存已选原子索引
+var molecule = { atoms: [], bonds: [] };  // 当前分子数据
+var selectedAtom = -1;
+var nextAtomId = 0;
+
+// 共价半径 (用于自动成键判定)
+var COVALENT_RADII = {
+  H:0.31, He:0.28, Li:1.28, Be:0.96, B:0.84, C:0.73, N:0.71, O:0.66, F:0.57,
+  Na:1.66, Mg:1.41, Al:1.21, Si:1.11, P:1.07, S:1.05, Cl:1.02,
+  K:2.03, Ca:1.76, Br:1.20, I:1.39, Fe:1.32, Zn:1.22,
+};
+
+// 元素颜色 (CPK)
+var CPK_COLORS = {
+  H:"#FFFFFF", C:"#404040", N:"#3050F0", O:"#FF2010", F:"#80FF20",
+  Si:"#808080", P:"#FF8000", S:"#FFCC00", Cl:"#20FF20", Br:"#802020",
+  I:"#802080", B:"#80FF80", Na:"#4040FF", Mg:"#208020", Fe:"#E08020",
+  Zn:"#7D80B0",
+};
+
+// ── 初始化 ─────────────────────────────────────────────────
+function initViewer() {
+  viewer = $3Dmol.createViewer("mol-viewer", {
+    backgroundColor: "white",
+    antialias: true,
+    ortho: false,
+  });
+  viewer.zoomTo();
+  viewer.render();
+  viewer.setClickable({clickable: true});
+
+  // 点击回调
+  viewer.atomClicked(function(atom) {
+    handleAtomClick(atom);
+  });
+
+  // 画布点击 (空白区域)
+  document.querySelector("#mol-viewer canvas").addEventListener("click", function(e) {
+    if (mode === "build") {
+      handleCanvasClick(e);
+    }
+  });
+
+  updateInfo("3D 建模器就绪 — 点击原子互动");
+}
+
+// ── 点击处理 ──────────────────────────────────────────────
+function handleAtomClick(atom) {
+  if (!atom || atom.atom === undefined) return;
+
+  var idx = atom.atom;
+  var elem = atom.elem || "C";
+
+  if (mode === "delete") {
+    deleteAtom(idx);
+    return;
+  }
+
+  if (mode === "measure") {
+    measureAtoms.push({idx: idx, elem: elem});
+    if (measureAtoms.length === 1) {
+      updateInfo("已选原子 " + elem + "(" + idx + ")，请点击第二个原子");
+    } else if (measureAtoms.length === 2) {
+      var a1 = measureAtoms[0], a2 = measureAtoms[1];
+      var dx = a2.x - a1.x, dy = a2.y - a1.y, dz = a2.z - a1.z;
+      var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      updateInfo("距离: " + dist.toFixed(3) + " Å  (" + a1.elem + "-" + a2.elem + ")");
+      highlightAtoms([a1.idx, a2.idx]);
+      measureAtoms = [];
+    }
+    return;
+  }
+
+  // 选择/搭建模式: 高亮选中原子
+  selectedAtom = idx;
+  highlightAtoms([idx]);
+
+  // 通知 Python
+  if (bridge && bridge.onAtomClicked) {
+    var a = molecule.atoms.find(function(a) { return a.id === idx; });
+    if (a) {
+      bridge.onAtomClicked(idx, elem, a.x, a.y, a.z);
+    }
+  }
+
+  updateInfo("选中: " + elem + " #" + idx);
+}
+
+function handleCanvasClick(e) {
+  // 获取点击位置的 3D 坐标
+  var pos = getClickPosition3D(e);
+  if (!pos) return;
+
+  addAtom(activeElement, pos.x, pos.y, pos.z);
+  updateInfo("放置: " + activeElement + " 在 (" +
+    pos.x.toFixed(2) + ", " + pos.y.toFixed(2) + ", " + pos.z.toFixed(2) + ")");
+}
+
+// ── 3D 点击位置计算 (射线-平面求交) ──────────────────────
+function getClickPosition3D(e) {
+  var canvas = document.querySelector("#mol-viewer canvas");
+  var rect = canvas.getBoundingClientRect();
+  var mx = e.clientX - rect.left;
+  var my = e.clientY - rect.top;
+
+  // 使用 3Dmol.js 内部方法获取模型中心
+  var center = viewer.getCenter ? viewer.getCenter() : {x:0, y:0, z:0};
+
+  // 获取相机信息
+  var cam = viewer.getCamera();
+  if (!cam) {
+    // 回退: 在 z=0 平面放置
+    return {x: (mx/rect.width - 0.5) * 10, y: (0.5 - my/rect.height) * 10, z: 0};
+  }
+
+  // 相机位置和方向
+  var campos = cam.position;
+  var target = cam.target || center;
+
+  // 计算射线方向 (简化: 屏幕中心指向点击位置)
+  var aspect = rect.width / rect.height;
+  var fov = cam.fov || 45;
+  var halfH = Math.tan(fov * Math.PI / 360) * 5;
+  var halfW = halfH * aspect;
+
+  var dirX = (mx / rect.width - 0.5) * 2 * halfW;
+  var dirY = (0.5 - my / rect.height) * 2 * halfH;
+  var dirZ = -5;
+
+  // 射线与 z=target.z 平面的交点
+  var camZ = campos.z || -10;
+  var t = (target.z || 0 - camZ) / dirZ;
+  if (t > 0) {
+    return {
+      x: (campos.x || 0) + dirX * t,
+      y: (campos.y || 0) + dirY * t,
+      z: (target.z || 0)
+    };
+  }
+
+  return {x: dirX, y: dirY, z: 0};
+}
+
+// ── 原子操作 ──────────────────────────────────────────────
+function addAtom(element, x, y, z) {
+  var id = nextAtomId++;
+  molecule.atoms.push({id: id, element: element, x: x, y: y, z: z});
+  autoBondNewAtom(id);
+  renderMolecule();
+  selectedAtom = id;
+}
+
+function deleteAtom(idx) {
+  // 删除原子和相连的键
+  molecule.atoms = molecule.atoms.filter(function(a) { return a.id !== idx; });
+  molecule.bonds = molecule.bonds.filter(function(b) {
+    return b.from !== idx && b.to !== idx;
+  });
+  selectedAtom = -1;
+  renderMolecule();
+  updateInfo("已删除原子 #" + idx);
+}
+
+function autoBondNewAtom(newId) {
+  var newAtom = molecule.atoms.find(function(a) { return a.id === newId; });
+  if (!newAtom) return;
+
+  var r1 = COVALENT_RADII[newAtom.element] || 0.7;
+
+  molecule.atoms.forEach(function(other) {
+    if (other.id === newId) return;
+    // 检查是否已有键
+    var exists = molecule.bonds.some(function(b) {
+      return (b.from === newId && b.to === other.id) ||
+             (b.from === other.id && b.to === newId);
+    });
+    if (exists) return;
+
+    var r2 = COVALENT_RADII[other.element] || 0.7;
+    var cutoff = (r1 + r2) * 1.2;
+    var dx = newAtom.x - other.x;
+    var dy = newAtom.y - other.y;
+    var dz = newAtom.z - other.z;
+    var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+    if (dist <= cutoff && dist > 0.2) {
+      var order = 1;
+      if (dist < cutoff * 0.75) order = 2;
+      if (dist < cutoff * 0.6) order = 3;
+      molecule.bonds.push({from: newId, to: other.id, order: order});
+    }
+  });
+}
+
+function autoBondAll() {
+  molecule.bonds = [];
+  for (var i = 0; i < molecule.atoms.length; i++) {
+    for (var j = i + 1; j < molecule.atoms.length; j++) {
+      var a1 = molecule.atoms[i], a2 = molecule.atoms[j];
+      var r1 = COVALENT_RADII[a1.element] || 0.7;
+      var r2 = COVALENT_RADII[a2.element] || 0.7;
+      var cutoff = (r1 + r2) * 1.2;
+      var dx = a1.x - a2.x;
+      var dy = a1.y - a2.y;
+      var dz = a1.z - a2.z;
+      var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (dist <= cutoff && dist > 0.2) {
+        var order = 1;
+        if (dist < cutoff * 0.75) order = 2;
+        if (dist < cutoff * 0.6) order = 3;
+        molecule.bonds.push({from: a1.id, to: a2.id, order: order});
+      }
+    }
+  }
+}
+
+// ── 渲染 ───────────────────────────────────────────────────
+function renderMolecule() {
+  if (!viewer) initViewer();
+  viewer.removeAllModels();
+
+  if (molecule.atoms.length === 0) {
+    viewer.zoomTo();
+    viewer.render();
+    updateInfo("空白画布 — 使用「搭建」模式放置原子");
+    return;
+  }
+
+  // 构建 XYZ 格式
+  var xyz = molecule.atoms.length + "\nBuilt molecule\n";
+  molecule.atoms.forEach(function(a) {
+    xyz += a.element + " " + a.x.toFixed(5) + " " + a.y.toFixed(5) + " " + a.z.toFixed(5) + "\n";
+  });
+
+  try {
+    viewer.addModel(xyz, "xyz");
+  } catch(e) {
+    updateInfo("渲染失败: " + e.message);
+    return;
+  }
+
+  // 设置显示样式
+  var style = getDisplayStyle();
+  viewer.setStyle({}, style);
+
+  // 高亮选中原子
+  if (selectedAtom >= 0) {
+    var selAtom = molecule.atoms.find(function(a) { return a.id === selectedAtom; });
+    if (selAtom) {
+      var selElem = selAtom.element;
+      // 用大的半透明球高亮
+    }
+  }
+
+  viewer.zoomTo();
+  viewer.render();
+  updateStats();
+}
+
+function getDisplayStyle() {
+  switch(displayMode) {
+    case "stick":
+      return {stick: {radius: 0.18}};
+    case "sphere":
+      return {sphere: {scale: 0.6}};
+    case "line":
+      return {line: {}};
+    case "ballstick":
+    default:
+      return {stick: {radius: 0.12}, sphere: {scale: 0.35}};
+  }
+}
+
+function highlightAtoms(indices) {
+  // 重新渲染后添加高亮
+  if (indices.length === 0) return;
+  try {
+    var sel = {};
+    sel.serial = indices.join(",");
+    viewer.setStyle(sel, {sphere: {scale: 0.5, color: "#ff4081"}, stick: {radius: 0.2, color: "#ff4081"}});
+    viewer.render();
+  } catch(e) {}
+}
+
+// ── 信息更新 ──────────────────────────────────────────────
+function updateInfo(msg) {
+  document.getElementById("info-overlay").textContent = msg;
+}
+
+function updateStats() {
+  var nAtoms = molecule.atoms.length;
+  var nBonds = molecule.bonds.length;
+  var elemCount = {};
+  molecule.atoms.forEach(function(a) {
+    elemCount[a.element] = (elemCount[a.element] || 0) + 1;
+  });
+  var formula = Object.keys(elemCount).sort().map(function(e) {
+    var c = elemCount[e];
+    return e + (c > 1 ? c : "");
+  }).join("");
+
+  updateInfo("分子: " + (formula || "空") + " | " + nAtoms + " 原子, " + nBonds + " 键");
+}
+
+// ── 模式/元素切换 (暴露给 Python) ─────────────────────────
+function setMode(m) {
+  mode = m;
+  selectedAtom = -1;
+  measureAtoms = [];
+  var modeNames = {build:"搭建", select:"选择", delete:"删除", measure:"测量"};
+  document.getElementById("mode-indicator").textContent =
+    "模式: " + (modeNames[m] || m);
+}
+
+function setActiveElement(el) {
+  activeElement = el;
+}
+
+function setDisplayMode(m) {
+  displayMode = m;
+  renderMolecule();
+}
+
+// ── 加载结构 ──────────────────────────────────────────────
+function loadSmiles(smiles) {
+  if (!viewer) initViewer();
+  molecule.atoms = [];
+  molecule.bonds = [];
+  selectedAtom = -1;
+  nextAtomId = 0;
+
+  viewer.removeAllModels();
+  try {
+    viewer.addModel(smiles, "smiles");
+    viewer.setStyle({}, getDisplayStyle());
+    viewer.zoomTo();
+    viewer.render();
+    // 从 viewer 提取原子信息
+    extractAtomsFromViewer();
+    updateInfo("SMILES: " + smiles);
+  } catch(e) {
+    updateInfo("加载失败: " + e.message);
+  }
+}
+
+function addMolfile(molfile) {
+  if (!viewer) initViewer();
+  molecule.atoms = [];
+  molecule.bonds = [];
+  selectedAtom = -1;
+  nextAtomId = 0;
+
+  viewer.removeAllModels();
+  try {
+    viewer.addModel(molfile, "mol");
+    viewer.setStyle({}, getDisplayStyle());
+    viewer.zoomTo();
+    viewer.render();
+    extractAtomsFromViewer();
+    updateInfo("Molfile 已加载");
+  } catch(e) {
+    updateInfo("加载失败: " + e.message);
+  }
+}
+
+function loadPdb(pdbData) {
+  if (!viewer) initViewer();
+  molecule.atoms = [];
+  molecule.bonds = [];
+  selectedAtom = -1;
+  nextAtomId = 0;
+
+  viewer.removeAllModels();
+  try {
+    viewer.addModel(pdbData, "pdb");
+    viewer.setStyle({}, {cartoon: {color: "spectrum"}});
+    viewer.zoomTo();
+    viewer.render();
+    updateInfo("PDB 已加载");
+  } catch(e) {
+    updateInfo("加载失败: " + e.message);
+  }
+}
+
+function addXYZ(xyzData) {
+  if (!viewer) initViewer();
+  viewer.removeAllModels();
+  try {
+    viewer.addModel(xyzData, "xyz");
+    viewer.setStyle({}, getDisplayStyle());
+    viewer.zoomTo();
+    viewer.render();
+    extractAtomsFromViewer();
+    updateInfo("XYZ 已加载");
+  } catch(e) {
+    updateInfo("加载失败: " + e.message);
+  }
+}
+
+function extractAtomsFromViewer() {
+  // 尝试从 3Dmol 模型数据提取原子
+  try {
+    var models = viewer.getAllModels();
+    if (models && models.length > 0) {
+      var atoms = models[0].selectedAtoms({});
+      if (atoms && atoms.length > 0) {
+        molecule.atoms = [];
+        molecule.bonds = [];
+        atoms.forEach(function(a) {
+          molecule.atoms.push({
+            id: nextAtomId++,
+            element: a.elem || "C",
+            x: a.x || 0, y: a.y || 0, z: a.z || 0,
+          });
+        });
+        autoBondAll();
+      }
+    }
+  } catch(e) {
+    // 静默失败
+  }
+}
+
+function clearViewer() {
+  molecule.atoms = [];
+  molecule.bonds = [];
+  selectedAtom = -1;
+  nextAtomId = 0;
+  measureAtoms = [];
+  viewer.removeAllModels();
+  viewer.zoomTo();
+  viewer.render();
+  updateInfo("画布已清除");
+}
+
+function center() {
+  viewer.zoomTo();
+  viewer.render();
+}
+
+// ── 导出 (给 Python 优化用) ───────────────────────────────
+function exportMolfile() {
+  if (molecule.atoms.length === 0) {
+    if (bridge && bridge.onStructureExported) {
+      bridge.onStructureExported("{}");
+    }
+    return;
+  }
+
+  try {
+    // 构建 MOL V2000 格式
+    var nAtoms = molecule.atoms.length;
+    var nBonds = molecule.bonds.length;
+
+    var lines = [];
+    lines.push("");
+    lines.push("  RDKit");
+    lines.push("");
+    lines.push(
+      String(nAtoms).padStart(3) +
+      String(nBonds).padStart(3) + "  0  0  0  0  0  0  0  0999 V2000"
+    );
+
+    molecule.atoms.forEach(function(a) {
+      var x = a.x.toFixed(4), y = a.y.toFixed(4), z = a.z.toFixed(4);
+      var elem = (a.element || "C").padEnd(3);
+      lines.push(
+        " ".repeat(4 - x.length > 0 ? 4 - x.length : 0) + x +
+        " ".repeat(4) +
+        " ".repeat(4 - y.length > 0 ? 4 - y.length : 0) + y +
+        " ".repeat(4) +
+        " ".repeat(4 - z.length > 0 ? 4 - z.length : 0) + z +
+        " " + elem + " 0  0  0  0  0  0  0  0  0  0  0  0"
+      );
+    });
+
+    molecule.bonds.forEach(function(b) {
+      var from = String(b.from + 1).padStart(3);
+      var to = String(b.to + 1).padStart(3);
+      var order = String(b.order || 1).padStart(3);
+      lines.push(from + to + order + "  0  0  0  0");
+    });
+
+    lines.push("M  END");
+
+    var molfile = lines.join("\n");
+
+    if (bridge && bridge.onStructureExported) {
+      bridge.onStructureExported(molfile);
+    }
+  } catch(e) {
+    // JSON 回退
+    if (bridge && bridge.onStructureExported) {
+      bridge.onStructureExported(JSON.stringify(molecule.atoms));
+    }
+  }
+}
+
+// ── QWebChannel ────────────────────────────────────────────
+new QWebChannel(qt.webChannelTransport, function(channel) {
+  bridge = channel.objects.bridge;
+  bridge.loadSmiles = loadSmiles;
+  bridge.addMolfile = addMolfile;
+  bridge.loadPdb = loadPdb;
+  bridge.addXYZ = addXYZ;
+  bridge.setDisplayMode = setDisplayMode;
+  bridge.setMode = setMode;
+  bridge.setActiveElement = setActiveElement;
+  bridge.clearViewer = clearViewer;
+  bridge.exportMolfile = exportMolfile;
+  bridge.center = center;
+});
+
+// ── 启动 ───────────────────────────────────────────────────
+window.onload = function() {
+  initViewer();
+};
+</script>
+</body>
+</html>
